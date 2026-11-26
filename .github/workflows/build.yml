@@ -1,0 +1,52 @@
+name: Build APK
+on:
+  push:
+    branches: [main, master]
+    paths: [app.zip]
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack app.zip
+        run: |
+          if [ -f app.zip ]; then
+            unzip -o -q app.zip
+            rm -f app.zip
+            git config user.name github-actions
+            git config user.email actions@github.com
+            git add -A
+            git commit -m "Unpack app.zip [skip ci]" || true
+            git push || true
+          fi
+          test -f settings.gradle
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Get face-detection files
+        run: node tools/fetch-assets.js
+      - name: Android SDK pieces
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" > /dev/null || true
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Build
+        run: gradle :app:assembleRelease -Pvcode=${{ github.run_number }} --no-daemon --stacktrace
+      - name: Name the APK
+        run: cp app/build/outputs/apk/release/*.apk SafeFeed.apk
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Safe Feed build ${{ github.run_number }}
+          files: SafeFeed.apk
+          make_latest: true
