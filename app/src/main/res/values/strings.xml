@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Safe Feed</string>
+    <string name="menu_reload">রিলোড</string>
+    <string name="menu_home">হোম</string>
+    <string name="menu_status">স্ট্যাটাস (সমস্যা হলে স্ক্রিনশট দিন)</string>
+    <string name="status_title">ফিল্টার স্ট্যাটাস</string>
+    <string name="close">বন্ধ</string>
+    <string name="load_failed">পেজ লোড হয়নি, ইন্টারনেট দেখে রিলোড করুন</string>
+</resources>

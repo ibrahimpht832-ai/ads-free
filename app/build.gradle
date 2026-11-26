@@ -1,0 +1,50 @@
+plugins {
+    id 'com.android.application'
+}
+
+// The build number comes from GitHub (-Pvcode=...), so every new APK can be installed over the old one.
+def vcode = (project.findProperty('vcode') ?: '1').toString().toInteger()
+
+android {
+    namespace 'com.safefeed.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.safefeed.app'
+        minSdk 26
+        targetSdk 34
+        versionCode vcode
+        versionName '1.0.' + vcode
+    }
+
+    signingConfigs {
+        release {
+            storeFile file('../keystore/safefeed.jks')
+            storeType 'jks'
+            storePassword 'safefeed'
+            keyAlias 'safefeed'
+            keyPassword 'safefeed'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.11.0'
+}
