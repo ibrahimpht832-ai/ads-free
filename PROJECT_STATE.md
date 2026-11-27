@@ -26,13 +26,20 @@ Releases page (`build-N`, file `SafeFeed.apk`). Install over the old version (si
 The signing key is in `keystore/safefeed.jks` (public repo: fine for a personal app, but anyone could sign an APK with it).
 
 ## Rules (fail-safe)
-- No answer / error / timeout = stays blurred.
-- Any face with a female score >= 0.30 blurs the whole picture (careful side). Big pictures get a second look at 512 px.
-- Videos: autoplay off, full-screen off (full-screen would skip the blur). A playing video is sampled about every
-  0.8 s, shown after 2 clean samples, and one woman's face blurs it until its source changes.
+- No answer / error / timeout = stays blurred. A picture is judged by its own size, never by how small it looks
+  right now (carousels / zoom animations).
+- Any face with a female score >= 0.20 blurs the whole picture (careful side). Faces need score >= 0.25.
+  Big pictures get extra looks at 512 and 608 px (finds small faces).
+- Small, nearly square pictures (profile photos, <= 256 px): if no face can be found at all they stay blurred.
+- Videos: autoplay off, full-screen off (full-screen would skip the blur). Playing videos are sampled every ~0.4 s
+  (video frames jump the checker queue), shown after 2 clean samples, and blurred again when no fresh clean answer
+  arrives for 2.5 s. One woman's face blurs a video until its source changes.
+- Reels: links, menu entries and headings called Reels are hidden (with their card), /reel pages are blocked in the
+  app and in the page, and every tall video (height/width >= 1.6) is never shown at all.
 
 ## Status
-- First version. NOT run on a real phone yet.
+- Version 2. Version 1 was built and installed by the user (blur was inconsistent, Reels still reachable).
+  Version 2 fixes the leaks found by review (size rule, background shorthand, Reels cards, video latency) - not yet seen on the phone.
 - Checked offline only: Java compiles against Android API stubs; `filter.js` and `ml.js` pass tests in desktop
   Chromium with a fake face library and fake app bridge.
 - Unknown until the first real run: Facebook's current page structure, whether pictures can be read in the page

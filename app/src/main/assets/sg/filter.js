@@ -12,15 +12,19 @@
   if (W.__sg) { return; }
 
   var CFG = {
-    blurPx: 28,            // blur strength
-    iconPx: 24,            // smaller than this = icon/dot, shown without a check
+    blurPx: 32,            // blur strength
+    iconPx: 24,            // a picture whose real size is smaller than this = icon/dot, shown without a check
     rootMargin: '600px 0px 600px 0px',
     imgMax: 640,           // longest side (px) of the copy sent for checking
     imgQuality: 0.85,
     videoMax: 224,
     videoQuality: 0.7,
-    videoEveryMs: 800,     // how often a playing video is sampled
+    videoEveryMs: 400,     // how often playing videos are sampled
+    videoBudget: 3,        // videos sampled per round
     videoCleanNeeded: 2,   // clean samples needed before a video is shown
+    videoStaleMs: 2500,    // a playing video with no fresh "clean" answer for this long is blurred again
+    videoWaitMs: 1200,     // an unanswered video frame older than this no longer blocks the next one
+    reelRatio: 1.6,        // taller than this (height / width) = Reel-like video: never shown
     maxTries: 3,
     retryMs: 3000,
     pendingMs: 60000,
@@ -34,7 +38,7 @@
   var SG = W.__sg = {
     v: 1,
     token: token,
-    st: { seen: 0, ok: 0, female: 0, err: 0, memo: 0, cors: 0, native: 0, frames: 0, reels: 0 },
+    st: { seen: 0, ok: 0, female: 0, err: 0, memo: 0, cors: 0, native: 0, frames: 0, reels: 0, reelVideos: 0 },
     errs: []
   };
 
@@ -50,9 +54,10 @@
   var CSS = ''
     + 'img:not([data-sgok]):not([src*="/rsrc.php/"]):not([src*="//static."]),'
     + 'video:not([data-sgok]),'
-    + '[style*="background-image"]:not([data-sgok]):not([style*="rsrc.php"]):not([style*="//static."])'
+    + '[style*="url("]:not([data-sgok]):not([style*="rsrc.php"]):not([style*="//static."])'
     + '{filter:blur(' + CFG.blurPx + 'px)!important;}'
     + 'svg:not([data-sgok]):has(image){filter:blur(' + CFG.blurPx + 'px)!important;}'
+    + 'video[data-sgreel]{visibility:hidden!important;}'
     + 'a[href*="/reel/"],a[href*="/reels"],a[href^="/reel"],'
     + '[aria-label="Reels"],[aria-label="Reels and short videos"],[aria-label="\u09B0\u09BF\u09B2\u09B8"]'
     + '{display:none!important;}';
@@ -96,8 +101,30 @@
     }
     if (n === 'image') { return el.getAttribute('href') || el.getAttribute('xlink:href') || ''; }
     var s = el.getAttribute('style') || '';
-    var mm = /background-image:\s*url\(\s*(['"]?)(.*?)\1\s*\)/i.exec(s);
-    return mm ? mm[2] : '';
+    var re = /url\(\s*(['"]?)(.*?)\1\s*\)/gi, mm;
+    while ((mm = re.exec(s)) !== null) { if (mm[2] && !isStatic(mm[2])) { return mm[2]; } }
+    return '';
+  }
+
+  // Is this really a tiny icon? Uses the picture's own size, NOT how big it looks right now
+  // (a picture inside a carousel / zoom animation can look tiny for a moment).
+  // true = icon, false = real picture, null = cannot tell yet.
+  function iconSized(el, raw) {
+    if (/\.svg(\?|#|$)|^data:image\/svg/i.test(raw)) { return true; }
+    var n = el.localName;
+    if (n === 'img') {
+      var nw = el.naturalWidth, nh = el.naturalHeight;
+      if (nw > 0 && nh > 0) { return Math.max(nw, nh) < CFG.iconPx; }
+      return null;
+    }
+    if (n === 'image') {
+      var w = parseFloat(el.getAttribute('width')), h = parseFloat(el.getAttribute('height'));
+      if (isFinite(w) && isFinite(h) && w > 0 && h > 0) { return Math.max(w, h) < CFG.iconPx; }
+      return false;
+    }
+    var ow = el.offsetWidth || 0, oh = el.offsetHeight || 0;
+    if (ow === 0 && oh === 0) { return null; }
+    return Math.max(ow, oh) < CFG.iconPx;
   }
 
   // ------------------------------------------------------------------ state
@@ -170,16 +197,18 @@
     consider(el);
   }
 
+  function waitLoad(el, m) {
+    m.waitLoad = true;
+    el.addEventListener('load', function () { m.waitLoad = false; consider(el); }, { once: true });
+  }
+
   // m.st: 0 new, 1 waiting for answer, 2 clean (shown), 3 woman (stays blurred), 4 error
   function consider(el) {
     var m = el.__sg;
     if (!m || el.localName === 'video') { return; }
     var raw = urlOf(el);
     if (!raw) {
-      if (el.localName === 'img' && !el.complete && !m.waitLoad) {
-        m.waitLoad = true;
-        el.addEventListener('load', function () { m.waitLoad = false; consider(el); }, { once: true });
-      }
+      if (el.localName === 'img' && !el.complete && !m.waitLoad) { waitLoad(el, m); }
       return;
     }
     if (raw === m.raw && m.st !== 0) { return; }
@@ -188,9 +217,9 @@
       unreveal(el);
     }
     if (isStatic(raw)) { m.st = 2; reveal(el); return; }
-    var r = el.getBoundingClientRect();
-    if (r.width === 0 && r.height === 0) { return; }                  // not on screen yet
-    if (Math.max(r.width, r.height) < CFG.iconPx) { m.st = 2; reveal(el); return; }
+    var ic = iconSized(el, raw);
+    if (ic === null) { if (el.localName === 'img' && !m.waitLoad) { waitLoad(el, m); } return; }
+    if (ic) { m.st = 2; reveal(el); return; }
     var hit = memo.get(m.key);
     if (hit === 0) { m.st = 2; SG.st.memo++; reveal(el); return; }
     if (hit === 1) { m.st = 3; SG.st.memo++; return; }
@@ -301,6 +330,7 @@
       } else if (verdict === 0) {
         if (m.vstate === 'female') { return; }
         m.clean++;
+        m.lastClean = Date.now();
         if (m.clean >= CFG.videoCleanNeeded) {
           if (m.vstate !== 'ok') { SG.st.ok++; }
           m.vstate = 'ok'; v.setAttribute('data-sgok', '1');
@@ -317,8 +347,9 @@
   function resetVideo(v) {
     var m = v.__sg;
     if (!m) { return; }
-    m.vstate = ''; m.clean = 0; m.vbusy = false; m.vseq++; m.taint = 0;
+    m.vstate = ''; m.clean = 0; m.vbusy = false; m.vseq++; m.taint = 0; m.lastClean = 0;
     v.removeAttribute('data-sgok');
+    v.removeAttribute('data-sgreel');
   }
   ['loadstart', 'emptied'].forEach(function (name) {
     D.addEventListener(name, function (e) {
@@ -339,12 +370,25 @@
     if (!b || vTickBusy) { return; }
     vTickBusy = true;
     try {
-      var budget = 2;
+      var budget = CFG.videoBudget, now = Date.now();
       videos.forEach(function (v) {
-        if (budget <= 0) { return; }
         if (!v.isConnected) { videos.delete(v); return; }
         var m = v.__sg;
-        if (!m || m.vbusy || m.vstate === 'female') { return; }
+        if (!m) { return; }
+        // tall videos look like Reels: never shown at all
+        if (v.videoWidth && v.videoHeight && v.videoHeight / v.videoWidth >= CFG.reelRatio) {
+          if (!v.hasAttribute('data-sgreel')) { v.setAttribute('data-sgreel', '1'); SG.st.reelVideos++; }
+          m.vstate = 'female';
+          v.removeAttribute('data-sgok');
+          return;
+        }
+        // no fresh "clean" answer for a while (slow phone, busy checker): blur again, check again
+        if (m.vstate === 'ok' && !v.paused && now - (m.lastClean || 0) > CFG.videoStaleMs) {
+          m.vstate = ''; m.clean = 0;
+          v.removeAttribute('data-sgok');
+        }
+        var waiting = m.vbusy && (now - (m.vsent || 0) <= CFG.videoWaitMs);
+        if (budget <= 0 || waiting || m.vstate === 'female') { return; }
         if (!visible.has(v)) { return; }
         if (m.vstate === 'ok' && v.paused) { return; }
         if (v.readyState < 2 || !v.videoWidth || !v.videoHeight) { return; }
@@ -365,12 +409,13 @@
       var b64 = vc.toDataURL('image/jpeg', CFG.videoQuality);
       var job = nextJob++;
       m.vbusy = true;
+      m.vsent = Date.now();
       jobs.set(job, { kind: 'v', el: v, vseq: m.vseq });
       setTimeout(function () {
         if (jobs.delete(job) && v.__sg) { v.__sg.vbusy = false; }
-      }, 20000);
+      }, 3000);   // a frame that has waited this long is out of date anyway
       SG.st.frames++;
-      b.frame(token, job, b64);
+      if (b.vframe) { b.vframe(token, job, b64); } else { b.frame(token, job, b64); }
     } catch (e) {
       m.vbusy = false;
       m.taint++;
@@ -397,18 +442,48 @@
 
   // ------------------------------------------------------------------ Reels
   var REEL_PATH = /^\/(reel|reels)(\/|$)/i;
+  var REEL_LABELS = ['reels', '\u09B0\u09BF\u09B2\u09B8', '\u09B0\u09BF\u09B2', 'reels and short videos'];
+  function hideNode(el) {
+    el.__sgReel = true;
+    el.style.setProperty('display', 'none', 'important');
+    SG.st.reels++;
+  }
+  // The post / shelf that a Reel link belongs to: the biggest parent that is still smaller than the screen.
+  function cardOf(a) {
+    var c = a.closest('[role="article"],article,[data-pagelet^="FeedUnit"],[data-pagelet*="Reel"]');
+    if (c) { return c; }
+    var best = a, cur = a.parentElement, lim = (W.innerHeight || 800) * 1.2;
+    for (var i = 0; i < 12 && cur && cur !== D.body && cur !== D.documentElement; i++) {
+      var r = cur.getBoundingClientRect();
+      if (r.height > lim) { break; }
+      best = cur; cur = cur.parentElement;
+    }
+    return best;
+  }
   function hideReels(root) {
     try {
-      var as = (root || D).querySelectorAll('a[href*="/reel"]');
+      var scope = root || D;
+      var as = scope.querySelectorAll('a[href*="/reel"]');
       for (var i = 0; i < as.length; i++) {
         var a = as[i];
-        if (a.__sgReel) { continue; }
-        a.__sgReel = true;
-        var card = a.closest('[role="article"],article,[data-pagelet^="FeedUnit"]');
-        (card || a).style.setProperty('display', 'none', 'important');
-        SG.st.reels++;
+        if (a.__sgSeen) { continue; }
+        a.__sgSeen = true;
+        hideNode(cardOf(a));
       }
-    } catch (e) { note('reels ' + e); }
+      // menu entries / shelf headings that are just the word "Reels"
+      var els = scope.querySelectorAll('span,h2,h3,h4,a,[role="heading"]');
+      for (var j = 0; j < els.length; j++) {
+        var e = els[j];
+        if (e.children.length) { continue; }
+        var t = (e.textContent || '').trim().toLowerCase();
+        if (e.__sgText === t) { continue; }
+        e.__sgText = t;
+        if (t && t.length <= 30 && REEL_LABELS.indexOf(t) >= 0) {
+          var host = e.closest('a,[role="tab"],[role="button"],[role="link"]');
+          hideNode(host || cardOf(e));
+        }
+      }
+    } catch (err) { note('reels ' + err); }
   }
   function guardLocation() {
     try { if (REEL_PATH.test(W.location.pathname)) { W.location.replace('/'); } } catch (e) { /* ignore */ }
@@ -430,7 +505,7 @@
   }, true);
 
   // ------------------------------------------------------------------ finding pictures
-  var SEL = 'img,video,image,[style*="background-image"]';
+  var SEL = 'img,video,image,[style*="url("]';
   function scanNode(n) {
     if (!n || n.nodeType !== 1) { return; }
     try {
@@ -476,7 +551,7 @@
             if (an !== 'style') { queued.add(t); }
             else {
               var sv = t.getAttribute('style');
-              if (sv && sv.indexOf('background-image') >= 0) { queued.add(t); }
+              if (sv && sv.indexOf('url(') >= 0) { queued.add(t); }
             }
           } else if (t.localName === 'video') {
             if (an === 'src') { resetVideo(t); }

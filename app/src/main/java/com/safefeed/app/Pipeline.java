@@ -31,8 +31,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 final class Pipeline {
 
     interface Host {
-        /** Ask the hidden face-check page to start job number jobId. Any thread. */
-        void runMl(int jobId);
+        /** Ask the hidden face-check page to start job number jobId (priority = video frame). Any thread. */
+        void runMl(int jobId, boolean priority);
 
         /** Send a verdict back to the Facebook page. Any thread. */
         void deliver(String token, int id, int verdict);
@@ -49,6 +49,7 @@ final class Pipeline {
     private static final int MAX_FRAME_BASE64 = 900 * 1024;
     private static final int SHRINK_TO = 640;
     private static final long JOB_TIMEOUT_SECONDS = 70;
+    private static final long VIDEO_TIMEOUT_SECONDS = 6; // an old video frame is worthless
     private static final int CACHE_MAX = 4000;
 
     private static final class Job {
@@ -56,12 +57,14 @@ final class Pipeline {
         final int id;
         final String key;
         final byte[] data;
+        final boolean priority;
 
-        Job(String token, int id, String key, byte[] data) {
+        Job(String token, int id, String key, byte[] data, boolean priority) {
             this.token = token;
             this.id = id;
             this.key = key;
             this.data = data;
+            this.priority = priority;
         }
     }
 
@@ -126,7 +129,7 @@ final class Pipeline {
                     nDownloads.incrementAndGet();
                     byte[] raw = download(url);
                     byte[] jpg = shrink(raw);
-                    submit(new Job(token, id, key, jpg));
+                    submit(new Job(token, id, key, jpg, false));
                 } catch (Throwable t) {
                     nErrors.incrementAndGet();
                     note("download: " + t);
@@ -136,8 +139,13 @@ final class Pipeline {
         });
     }
 
-    /** The page already drew the picture (or a video frame) and sent it as base64 JPEG. */
+    /** The page already drew the picture and sent it as base64 JPEG. */
     void frame(String token, int id, String b64) {
+        frame(token, id, b64, false);
+    }
+
+    /** A picture or a video frame as base64 JPEG. Video frames (priority) are checked first. */
+    void frame(String token, int id, String b64, boolean priority) {
         if (!validToken(token) || b64 == null) {
             return;
         }
@@ -152,7 +160,7 @@ final class Pipeline {
             if (bytes.length < 100) {
                 throw new IOException("frame too small");
             }
-            submit(new Job(token, id, null, bytes));
+            submit(new Job(token, id, null, bytes, priority));
         } catch (Throwable t) {
             nErrors.incrementAndGet();
             note("frame: " + t);
@@ -177,7 +185,10 @@ final class Pipeline {
             waiting.clear();
         }
         for (int i = 0; i < flush.size(); i++) {
-            host.runMl(flush.get(i).intValue());
+            Job j = jobs.get(flush.get(i));
+            if (j != null) {
+                host.runMl(flush.get(i).intValue(), j.priority);
+            }
         }
     }
 
@@ -260,7 +271,7 @@ final class Pipeline {
             public void run() {
                 expire(jobId);
             }
-        }, JOB_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        }, job.priority ? VIDEO_TIMEOUT_SECONDS : JOB_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         boolean now;
         synchronized (lock) {
             now = mlReady;
@@ -269,7 +280,7 @@ final class Pipeline {
             }
         }
         if (now) {
-            host.runMl(jobId);
+            host.runMl(jobId, job.priority);
         }
     }
 

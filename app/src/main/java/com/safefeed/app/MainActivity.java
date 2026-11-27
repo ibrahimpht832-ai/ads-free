@@ -264,6 +264,11 @@ public class MainActivity extends Activity implements Pipeline.Host {
         }
 
         @JavascriptInterface
+        public void vframe(String token, int id, String base64) {
+            pipeline.frame(token, id, base64, true);
+        }
+
+        @JavascriptInterface
         public void log(String msg) {
             pipeline.note("page: " + msg);
         }
@@ -347,12 +352,13 @@ public class MainActivity extends Activity implements Pipeline.Host {
     // ------------------------------------------------------------------ Pipeline.Host
 
     @Override
-    public void runMl(final int jobId) {
+    public void runMl(final int jobId, final boolean priority) {
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 if (ml != null && !isDestroyed()) {
-                    ml.evaluateJavascript("window.mlRun&&window.mlRun(" + jobId + ")", null);
+                    ml.evaluateJavascript("window.mlRun&&window.mlRun(" + jobId + ","
+                            + (priority ? 1 : 0) + ")", null);
                 }
             }
         });
